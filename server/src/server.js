@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
     await connectDB();
 
-    app.listen(PORT, () => {
+    app.listen(PORT, "0.0.0.0", () => {
         console.log(`LabelIQ server running on port ${PORT}`);
     });
 };
