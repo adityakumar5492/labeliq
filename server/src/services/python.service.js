@@ -2,12 +2,14 @@ const { spawn } = require("child_process");
 const path = require("path");
 
 const getPythonPath = () => {
+    const isWindows = process.platform === "win32";
+
     return path.join(
         __dirname,
-        "../../../ai/venv/Scripts/python.exe"
+        "../../../ai/venv",
+        isWindows ? "Scripts/python.exe" : "bin/python"
     );
 };
-
 
 const runPythonScript = ({
     scriptPath,
@@ -16,67 +18,59 @@ const runPythonScript = ({
     return new Promise((resolve, reject) => {
         const pythonProcess = spawn(
             getPythonPath(),
-            [scriptPath, JSON.stringify(input)]
+            [scriptPath]
         );
 
         let output = "";
         let errorOutput = "";
 
-        pythonProcess.stdout.on(
-            "data",
-            (data) => {
-                output += data.toString();
+        pythonProcess.stdout.on("data", (data) => {
+            output += data.toString();
+        });
+
+        pythonProcess.stderr.on("data", (data) => {
+            errorOutput += data.toString();
+        });
+
+        pythonProcess.on("close", (code) => {
+            if (code !== 0) {
+                return reject(
+                    new Error(
+                        errorOutput ||
+                            "Python process failed"
+                    )
+                );
             }
-        );
 
-        pythonProcess.stderr.on(
-            "data",
-            (data) => {
-                errorOutput += data.toString();
+            try {
+                const result = JSON.parse(output);
+                resolve(result);
+            } catch (error) {
+                console.error(
+                    "Python output:",
+                    output
+                );
+
+                reject(
+                    new Error(
+                        "Invalid response from Python"
+                    )
+                );
             }
-        );
+        });
 
-        pythonProcess.on(
-            "close",
-            (code) => {
-                if (code !== 0) {
-                    return reject(
-                        new Error(
-                            errorOutput ||
-                                "Python process failed"
-                        )
-                    );
-                }
+        pythonProcess.on("error", (error) => {
+            reject(error);
+        });
 
-                try {
-                    const result =
-                        JSON.parse(output);
-
-                    resolve(result);
-                } catch (error) {
-                    console.error(
-                        "Python output:",
-                        output
-                    );
-
-                    reject(
-                        new Error(
-                            "Invalid response from Python"
-                        )
-                    );
-                }
-            }
-        );
-
-        pythonProcess.on(
-            "error",
-            (error) => {
-                reject(error);
-            }
-        );
+        if (input !== undefined) {
+            pythonProcess.stdin.write(
+                JSON.stringify(input)
+            );
+            pythonProcess.stdin.end();
+        }
     });
 };
-
 
 const runRag = ({
     question = null,
@@ -102,7 +96,6 @@ const runRag = ({
     });
 };
 
-
 const runExtraction = ({
     imageBuffer,
     mimeType,
@@ -119,11 +112,11 @@ const runExtraction = ({
             "../../../ai/extraction/extract.py"
         );
 
-        const input = JSON.stringify({
+        const input = {
             imageBase64:
                 imageBuffer.toString("base64"),
             mimeType,
-        });
+        };
 
         const pythonProcess = spawn(
             getPythonPath(),
@@ -133,75 +126,62 @@ const runExtraction = ({
         let output = "";
         let errorOutput = "";
 
-        pythonProcess.stdout.on(
-            "data",
-            (data) => {
-                output += data.toString();
+        pythonProcess.stdout.on("data", (data) => {
+            output += data.toString();
+        });
+
+        pythonProcess.stderr.on("data", (data) => {
+            errorOutput += data.toString();
+        });
+
+        pythonProcess.on("close", (code) => {
+            if (errorOutput) {
+                console.error(
+                    "Python extraction stderr:\n" +
+                        errorOutput
+                );
             }
+
+            if (code !== 0) {
+                return reject(
+                    new Error(
+                        errorOutput ||
+                            "Python extraction failed"
+                    )
+                );
+            }
+
+            try {
+                const result = JSON.parse(output);
+                resolve(result);
+            } catch (error) {
+                console.error(
+                    "Python extraction output:",
+                    output
+                );
+
+                reject(
+                    new Error(
+                        "Invalid extraction response from Python"
+                    )
+                );
+            }
+        });
+
+        pythonProcess.on("error", (error) => {
+            reject(error);
+        });
+
+        // Keep image data in stdin.
+        // This avoids Windows ENAMETOOLONG and also
+        // works correctly on Render/Linux.
+        pythonProcess.stdin.write(
+            JSON.stringify(input)
         );
 
-        pythonProcess.stderr.on(
-            "data",
-            (data) => {
-                errorOutput += data.toString();
-            }
-        );
-
-        pythonProcess.on(
-            "close",
-            (code) => {
-                // Temporary: surface stderr debug output (from
-                // DEBUG_EXTRACTION=1 in extract.py) even on success,
-                // so it's visible in the server console. Safe to
-                // remove once the root cause is confirmed.
-                if (errorOutput) {
-                    console.error(
-                        "Python extraction stderr:\n" +
-                            errorOutput
-                    );
-                }
-
-                if (code !== 0) {
-                    return reject(
-                        new Error(
-                            errorOutput ||
-                                "Python extraction failed"
-                        )
-                    );
-                }
-
-                try {
-                    const result =
-                        JSON.parse(output);
-
-                    resolve(result);
-                } catch (error) {
-                    console.error(
-                        "Python extraction output:",
-                        output
-                    );
-
-                    reject(
-                        new Error(
-                            "Invalid extraction response from Python"
-                        )
-                    );
-                }
-            }
-        );
-
-        pythonProcess.on(
-            "error",
-            (error) => {
-                reject(error);
-            }
-        );
-
-        pythonProcess.stdin.write(input);
         pythonProcess.stdin.end();
     });
 };
-
 
 module.exports = {
     runRag,
